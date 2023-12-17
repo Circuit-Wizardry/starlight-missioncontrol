@@ -1,0 +1,1 @@
+{ "startupMode": 0, "features": [ {"id": 0, "type": "PYRO", "data": { "action": "main", "apogee": "true", "height": 694 }}, {"id": 1, "type": "PYRO", "data": { "action": "drogue", "trigger": 0, "value": 0 }}, { "id": 2, "type": "TVC" } ] }
