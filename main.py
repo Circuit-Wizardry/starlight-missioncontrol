@@ -24,12 +24,20 @@ read_data = [];
 file = open("data.json", "r")
 x = file.read()
 x = x.replace("'", '"');
-y = 0;
+y = 0
 try:
     y = json.loads(x)
 except:
+    print("defaulting to startupMode 0")
     y = json.loads('{"startupMode": 0 }')
 mode = y["startupMode"]
+
+file.close()
+time.sleep(0.25);
+x = x.replace('"startupMode": 1', '"startupMode": 0');
+file = open("data.json", "w")
+file.write(x)
+file.close()
 
 
 while mode == 0:
@@ -117,6 +125,12 @@ count = 0
 
 event = 0;
 
+apoapsis = 10000;
+apoapsis_timeout = 0;
+reached_apoapsis = False;
+pressure_values = []
+baseline_pressure = 0;
+
 while mode == 1: # our main loop
     data = gyr.get_accel_and_gyro_data()
     f.update_nomag((data[0], data[1], data[2]), (data[3], data[4], data[5]))
@@ -124,19 +138,46 @@ while mode == 1: # our main loop
     gyr.get_acceleration()
     count += 1;
     
-    accelX = gyr.ax + math.sin(f.pitch * (math.pi/180));
-    accelY = gyr.ay - math.cos(f.pitch * (math.pi/180)) * math.sin(f.roll * (math.pi/180))
-    accelZ = gyr.az - math.cos(f.pitch * (math.pi/180)) * math.cos(f.roll * (math.pi/180))
+    accelX = gyr.ax #+ math.sin(f.pitch * (math.pi/180));
+    accelY = gyr.ay #- math.cos(f.pitch * (math.pi/180)) * math.sin(f.roll * (math.pi/180))
+    accelZ = gyr.az #- math.cos(f.pitch * (math.pi/180)) * math.cos(f.roll * (math.pi/180))
     
-    if accelY > 1:
-        event = 1
-        print('launch!')
+    pressure = temp.getPressure();
     
+    pressure_values.append(pressure);
     
-    file.write(str(event) + ',' + str(accelX) + ',' + str(accelY) + ',' + str(accelZ) + ',' + str(temp.getPressure()) + ',' + str(temp.getTemperature()) + ',' + str(f.roll) + ',' + str(f.pitch) + ':')
+    if len(pressure_values) > 5:
+        pressure_values.pop(0);
+        
+    avg_pressure = 0;
+    for i in range(len(pressure_values)):
+        avg_pressure += pressure_values[i];
+    
+    avg_pressure = avg_pressure / len(pressure_values);
+    
+    if avg_pressure - pressure > 0.05:
+        apoapsis = avg_pressure;
+        apoapsis_timeout = 0;
+    elif abs(avg_pressure - apoapsis) > 0.1 and len(pressure_values) == 5:
+        if apoapsis == 10000:
+            apoapsis = avg_pressure;
+            baseline_pressure = avg_pressure;
+        apoapsis_timeout += 1;
+    else:
+        apoapsis_timeout = 0;
+        
+    if apoapsis_timeout > 3 and not reached_apoapsis:
+        reached_apoapsis = True;
+        print("apoapsis")
+        led.value(1)
+        event = 2;
+    
+    file.write(str(event) + ',' + str(accelX) + ',' + str(accelY) + ',' + str(accelZ) + ',' + str(avg_pressure) + ',' + str(temp.getTemperature()) + ',' + str(f.roll) + ',' + str(f.pitch) + ':')
     
     if count % 50 == 0:
         print("Pitch: " + str("%.2f" % f.pitch) + " Roll: " + str("%.2f" % f.roll) + "\naX: " + str(accelX) + "\naY: " + str(accelY) + "\naZ: " + str(accelZ) )
-
+        file.close()
+        file = open("flight_data.txt", "a")
+        
     event = 0;
     
