@@ -4,9 +4,19 @@ import math
 import starlight
 import json
 import time
+import gpio
 import sys
 import fusion
 from machine import Pin
+
+def getAltitude(seaLevel, pressure):
+    if seaLevel == 0:
+        return 0;
+    return (44330.0 * (1.0 - pow(pressure / seaLevel, 0.1903))) * 3.281; # returns altitude in feet
+
+
+# ----------HARDWARE------------
+outputs = [gpio.GPIO(0, 6), gpio.GPIO(1, 7)]
 
 connected = False
 mode = 0;
@@ -31,6 +41,32 @@ except:
     print("defaulting to startupMode 0")
     y = json.loads('{"startupMode": 0 }')
 mode = y["startupMode"]
+
+# Set our pyro channel settings
+
+for i in range(len(y["features"])):
+    if y["features"][i]["type"] == "PYRO":
+        if y["features"][i]["data"]["action"] == "none":
+            outputs[i].setTrigger(0);
+        if y["features"][i]["data"]["action"] == "main":
+            if y["features"][i]["data"]["apogee"] == "true":
+                outputs[i].setTrigger(1);
+            else:   
+                outputs[i].setTrigger(2);
+                outputs[i].setCustom(y["features"][i]["data"]["height"]);
+        if y["features"][i]["data"]["action"] == "drogue": # drogue only has one option: apogee
+            outputs[i].setTrigger(1);
+        if y["features"][i]["data"]["action"] == "custom": # custom: this is where things get fun :)
+            outputs[i].setTrigger(y["features"][i]["data"]["trigger"]);
+            outputs[i].setCustom(y["features"][i]["data"]["value"]);
+            outputs[i].setFireLength(y["features"][i]["data"]["time"] * 12.5);
+
+            
+
+        
+        
+# outputs[0].setTrigger(y["features"][0]["data"]["action"]);
+# outputs[1].setTrigger(y["features"][1]["data"]["action"]);
 
 file.close()
 time.sleep(0.25);
@@ -131,17 +167,30 @@ reached_apoapsis = False;
 pressure_values = []
 baseline_pressure = 0;
 
+limiter = time.ticks_ms();
+lastTime = time.ticks_ms();
+hz = 0;
+
 while mode == 1: # our main loop
+    lastTime = time.ticks_ms();
     data = gyr.get_accel_and_gyro_data()
     f.update_nomag((data[0], data[1], data[2]), (data[3], data[4], data[5]))
 
     gyr.get_acceleration()
     count += 1;
+    hz += 1;
     
+    gpevent = gpio.getEvent()
+    if gpevent > 0:
+        event = gpevent;
+    
+    # Raw accelaration values
     accelX = gyr.ax #+ math.sin(f.pitch * (math.pi/180));
     accelY = gyr.ay #- math.cos(f.pitch * (math.pi/180)) * math.sin(f.roll * (math.pi/180))
     accelZ = gyr.az #- math.cos(f.pitch * (math.pi/180)) * math.cos(f.roll * (math.pi/180))
     
+    
+    # Pressure averaging
     pressure = temp.getPressure();
     
     pressure_values.append(pressure);
@@ -155,6 +204,8 @@ while mode == 1: # our main loop
     
     avg_pressure = avg_pressure / len(pressure_values);
     
+    
+    # Apogee detection
     if avg_pressure - pressure > 0.05:
         apoapsis = avg_pressure;
         apoapsis_timeout = 0;
@@ -169,15 +220,32 @@ while mode == 1: # our main loop
     if apoapsis_timeout > 3 and not reached_apoapsis:
         reached_apoapsis = True;
         print("apoapsis")
+        gpio.runTrigger(outputs, 1);
         led.value(1)
         event = 2;
     
-    file.write(str(event) + ',' + str(accelX) + ',' + str(accelY) + ',' + str(accelZ) + ',' + str(avg_pressure) + ',' + str(temp.getTemperature()) + ',' + str(f.roll) + ',' + str(f.pitch) + ':')
+    altitude = getAltitude(baseline_pressure, avg_pressure);
     
+    # Log data
+    file.write(str(event) + ',' + str(accelX) + ',' + str(accelY) + ',' + str(accelZ) + ',' + str(altitude) + ',' + str(temp.getTemperature()) + ',' + str(f.roll) + ',' + str(f.pitch) + ':')
+    
+    # Save logged data
     if count % 50 == 0:
         print("Pitch: " + str("%.2f" % f.pitch) + " Roll: " + str("%.2f" % f.roll) + "\naX: " + str(accelX) + "\naY: " + str(accelY) + "\naZ: " + str(accelZ) )
         file.close()
         file = open("flight_data.txt", "a")
         
     event = 0;
+    
+    gpio.updateTimeouts();
+    gpio.checkForRuns(outputs, altitude, reached_apoapsis, accelX, accelY, accelZ);
+    
+    limiter = time.ticks_ms();
+    # Loop control
+    time.sleep(((limiter - lastTime - 80) * -1)/1000); # hz
+    limiter = time.ticks_ms();
+    
+    hz = 1/((limiter - lastTime)/1000);
+#     print(hz);
+    
     
