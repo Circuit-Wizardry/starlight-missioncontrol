@@ -127,7 +127,7 @@ while mode == 0:
         writing_data = False;
         data_to_write = [];
         for i in range(len(read_data)):
-            # 0x11 is start byte then next byte determines "type" of operation. 0x13 means data
+            # 0x11 is start byte then next byte determines "type" of operation. 0x13 means writing data
             if writing_data:
                 data_to_write.append(str(read_data[i]));
             if read_data[i] == '\x11':
@@ -141,7 +141,15 @@ while mode == 0:
             file.close()
             utime.sleep(0.05)
             led.value(0);
-        
+            file_check = open("data.json", "r")
+            try:
+                json.loads(file_check.read())
+                writing_data = False;
+                read_data = [];
+            except:
+                pass;
+            file_check.close()
+      
     if connected:
         for i in range(len(read_data)):
             # 0x11 is start byte then next byte determines "type" of operation. 0x14 means ready to recieve
@@ -157,6 +165,18 @@ while mode == 0:
                             break;
                         print(chunk, end="")
                         count += 1;
+
+    if connected:
+        for i in range(len(read_data)):
+            # 0x11 is start byte then next byte determines "type" of operation. 0x16 means disconnect
+            if writing_data:
+                data_to_write.append(str(read_data[i]));
+            if read_data[i] == '\x11':
+                if read_data[i+1] == '\x16':
+                    connected = False;
+                    led.value(1);
+                    time.sleep(0.25);
+                    led.value(0);
 
 
 
