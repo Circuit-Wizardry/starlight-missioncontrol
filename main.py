@@ -7,12 +7,13 @@ import time
 import gpio
 import sys
 import fusion
+import machine
 from machine import Pin
 
-def getAltitude(seaLevel, pressure):
-    if seaLevel == 0:
-        return 0;
-    return (44330.0 * (1.0 - pow(pressure / seaLevel, 0.1903))) * 3.281; # returns altitude in feet
+time.sleep(3);
+
+def getAltitude(pressure):
+    return (145366.45 * (1.0 - pow(pressure / 1013.25, 0.190284))); # returns altitude in feet
 
 
 # ----------HARDWARE------------
@@ -39,28 +40,36 @@ try:
     y = json.loads(x)
 except:
     print("defaulting to startupMode 0")
-    y = json.loads('{"startupMode": 0 }')
+    y = json.loads('{"startupMode":0}')
 mode = y["startupMode"]
 
 # Set our pyro channel settings
 
-for i in range(len(y["features"])):
-    if y["features"][i]["type"] == "PYRO":
-        if y["features"][i]["data"]["action"] == "none":
-            outputs[i].setTrigger(0);
-        if y["features"][i]["data"]["action"] == "main":
-            if y["features"][i]["data"]["apogee"] == "true":
+try:
+    for i in range(len(y["features"])):
+        if y["features"][i]["type"] == "PYRO": # gpio is included for "emulate pyro charge"
+            if y["features"][i]["data"]["action"] == "none":
+                outputs[i].setTrigger(0);
+            if y["features"][i]["data"]["action"] == "main":
+                if y["features"][i]["data"]["apogee"] == True:
+                    outputs[i].setTrigger(1);
+                else:   
+                    outputs[i].setTrigger(2);
+                    outputs[i].setCustom(y["features"][i]["data"]["height"]);
+            if y["features"][i]["data"]["action"] == "drogue": # drogue only has one option: apogee
                 outputs[i].setTrigger(1);
-            else:   
-                outputs[i].setTrigger(2);
-                outputs[i].setCustom(y["features"][i]["data"]["height"]);
-        if y["features"][i]["data"]["action"] == "drogue": # drogue only has one option: apogee
-            outputs[i].setTrigger(1);
-        if y["features"][i]["data"]["action"] == "custom": # custom: this is where things get fun :)
-            outputs[i].setTrigger(y["features"][i]["data"]["trigger"]);
-            outputs[i].setCustom(y["features"][i]["data"]["value"]);
-            outputs[i].setFireLength(y["features"][i]["data"]["time"] * 12.5);
-
+            if y["features"][i]["data"]["action"] == "custom": # custom: this is where things get fun :)
+                outputs[i].setTrigger(y["features"][i]["data"]["trigger"]);
+                outputs[i].setCustom(y["features"][i]["data"]["value"]);
+                outputs[i].setFireLength(y["features"][i]["data"]["time"] * 12.5);
+except:
+    led.value(1)
+    time.sleep(0.1)
+    led.value(0)
+    time.sleep(0.1)
+    led.value(1)
+    time.sleep(0.1)
+    led.value(0)
             
 
         
@@ -68,9 +77,10 @@ for i in range(len(y["features"])):
 # outputs[0].setTrigger(y["features"][0]["data"]["action"]);
 # outputs[1].setTrigger(y["features"][1]["data"]["action"]);
 
+# Clean up files
 file.close()
 time.sleep(0.25);
-x = x.replace('"startupMode": 1', '"startupMode": 0');
+x = x.replace('"startupMode":1', '"startupMode":0');
 file = open("data.json", "w")
 file.write(x)
 file.close()
@@ -91,12 +101,25 @@ while mode == 0:
                     led.value(1);
                     connected = True;
                     read_data = [];
+
+                    # send curent data.json to MissionControl
+                    data_file = open('data.json', 'r')
+                    count = 0
+                    while True:
+                        chunk = data_file.read(1)
+                        if chunk == "": # if chunk is empty
+                            break;
+                        print(chunk, end="")
+                        count += 1;
+                    
+                    data_file.close()
+                    
                     utime.sleep(0.25);
                     led.value(0);
                     break;
                     
     
-        # Searching for connection
+        # Searching for connection. sc is starlight's code to send
         print("sc");
         utime.sleep(0.25);
 
@@ -224,7 +247,7 @@ while mode == 1: # our main loop
         led.value(1)
         event = 2;
     
-    altitude = getAltitude(baseline_pressure, avg_pressure);
+    altitude = getAltitude(avg_pressure);
     
     # Log data
     file.write(str(event) + ',' + str(accelX) + ',' + str(accelY) + ',' + str(accelZ) + ',' + str(altitude) + ',' + str(temp.getTemperature()) + ',' + str(f.roll) + ',' + str(f.pitch) + ':')
@@ -240,10 +263,12 @@ while mode == 1: # our main loop
     gpio.updateTimeouts();
     gpio.checkForRuns(outputs, altitude, reached_apoapsis, accelX, accelY, accelZ);
     
+
     limiter = time.ticks_ms();
     # Loop control
-    time.sleep(((limiter - lastTime - 80) * -1)/1000); # hz
+    time.sleep(((limiter - lastTime - 80) * -1)/1000); # 80 = loop every 80 ms = 12.5hz
     limiter = time.ticks_ms();
+
     
     hz = 1/((limiter - lastTime)/1000);
 #     print(hz);
