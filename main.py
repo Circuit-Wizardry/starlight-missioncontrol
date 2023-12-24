@@ -174,6 +174,9 @@ f = fusion.Fusion()
 
 # temp.setGroundPressure(temp.getPressure());
 
+time.sleep(3); # giving a grace period before board is "ready"
+
+
 accelX = 0;
 accelY = 0;
 accelZ = 0;
@@ -194,7 +197,18 @@ limiter = time.ticks_ms();
 lastTime = time.ticks_ms();
 hz = 0;
 
+baseline_pressure = temp.getPressure();
+
+l_val = False;
+
 while mode == 1: # our main loop
+    if l_val == True:
+        led.value(False);
+        l_val = False;
+    else:
+        led.value(True);
+        l_val = True;
+    
     lastTime = time.ticks_ms();
     data = gyr.get_accel_and_gyro_data()
     f.update_nomag((data[0], data[1], data[2]), (data[3], data[4], data[5]))
@@ -248,6 +262,8 @@ while mode == 1: # our main loop
         event = 2;
     
     altitude = getAltitude(avg_pressure);
+    
+    print(altitude)
     
     # Log data
     file.write(str(event) + ',' + str(accelX) + ',' + str(accelY) + ',' + str(accelZ) + ',' + str(altitude) + ',' + str(temp.getTemperature()) + ',' + str(f.roll) + ',' + str(f.pitch) + ':')
