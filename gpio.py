@@ -66,6 +66,7 @@ def checkForRuns(pins, pressure, apogee, accelX, accelY, accelZ):
 class GPIO:
     _pin = 0;
     _trigger = 0;
+    _custom = 0;
     _triggered = False;
     _fireLength = 12.5;
     _identifier = 0;
@@ -74,7 +75,7 @@ class GPIO:
     def __init__(self, identifier, pin):
         self._pin = pin;
         self._custom = 0;
-        self._identifier = 0;
+        self._identifier = identifier;
         self._pyro = Pin(self._pin, Pin.OUT);
     
     def setTrigger(self, trigger):

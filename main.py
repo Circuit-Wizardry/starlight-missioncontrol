@@ -8,23 +8,42 @@ import gpio
 import sys
 import fusion
 import machine
-from machine import Pin
+from machine import Pin, PWM
+
 
 time.sleep(3);
 
+baseline_altitude = 0;
 def getAltitude(pressure):
     return (145366.45 * (1.0 - pow(pressure / 1013.25, 0.190284))); # returns altitude in feet
 
 
 # ----------HARDWARE------------
-outputs = [gpio.GPIO(0, 6), gpio.GPIO(1, 7)]
+# pyro channels and GPIO pins are treated the same in firmware
+outputs = [gpio.GPIO(0, 6), gpio.GPIO(1, 7), gpio.GPIO(2, 0), gpio.GPIO(3, 1), gpio.GPIO(4, 16), gpio.GPIO(5, 17), gpio.GPIO(6, 18), gpio.GPIO(7, 19)]
+leds = [Pin(24, Pin.OUT)]
+buzzers = []
+
+# -- HARDWARE FUNCTIONS --
+def toggleLeds():
+    for i in range(len(leds)):
+        if leds[i].value() == 0:
+            leds[i].value(1);
+        else:
+            leds[i].value(0);
+
+def buzz_blocking(duration):
+    for i in range(len(buzzers)):
+        buzzers[i].value(1);
+        time.sleep(duration);
+        buzzers[i].value(0);
+
 
 connected = False
 mode = 0;
 
 poll_obj = select.poll()
 poll_obj.register(sys.stdin,1)
-led = Pin(24, Pin.OUT)
 
 read_data = [];
 
@@ -47,44 +66,54 @@ mode = y["startupMode"]
 
 try:
     for i in range(len(y["features"])):
-        if y["features"][i]["type"] == "PYRO": # gpio is included for "emulate pyro charge"
-            if y["features"][i]["data"]["action"] == "none":
+        print(y["features"][i]["type"]);
+        if y["features"][i]["type"] == "PYRO" or y["features"][i]["type"] == "GPIO": # gpio is included for "emulate pyro charge"
+            action = y["features"][i]["data"]["action"];
+            if action == "none":
                 outputs[i].setTrigger(0);
-            if y["features"][i]["data"]["action"] == "main":
+            if action == "main":
                 if y["features"][i]["data"]["apogee"] == True:
                     outputs[i].setTrigger(1);
                 else:   
                     outputs[i].setTrigger(2);
                     outputs[i].setCustom(y["features"][i]["data"]["height"]);
-            if y["features"][i]["data"]["action"] == "drogue": # drogue only has one option: apogee
+            if action == "drogue": # drogue only has one option: apogee
                 outputs[i].setTrigger(1);
-            if y["features"][i]["data"]["action"] == "custom": # custom: this is where things get fun :)
+            if action == "custom": # custom: this is where things get fun :)
                 outputs[i].setTrigger(y["features"][i]["data"]["trigger"]);
                 outputs[i].setCustom(y["features"][i]["data"]["value"]);
                 outputs[i].setFireLength(y["features"][i]["data"]["time"] * 12.5);
+            if action == "output": # output - we either put in LEDs or buzzers
+                print("output!");
+                if y["features"][i]["data"]["data"]["action"] == "buzzer":
+                    print("buzzer found");
+                    buzzers.append(Pin(y["features"][i]["data"]["pin"], Pin.OUT));
+                if y["features"][i]["data"]["data"]["action"] == "led":
+                    leds.append(Pin(y["features"][i]["data"]["pin"], Pin.OUT))
+
 except:
-    led.value(1)
+    print("error lmao");
+    toggleLeds();
     time.sleep(0.1)
-    led.value(0)
+    toggleLeds();
     time.sleep(0.1)
-    led.value(1)
+    toggleLeds();
     time.sleep(0.1)
-    led.value(0)
+    toggleLeds();
             
 
-        
-        
+       
 # outputs[0].setTrigger(y["features"][0]["data"]["action"]);
 # outputs[1].setTrigger(y["features"][1]["data"]["action"]);
 
 # Clean up files
 file.close()
 time.sleep(0.25);
-x = x.replace('"startupMode":1', '"startupMode":0');
-file = open("data.json", "w")
-file.write(x)
-file.close()
 
+# two short beeps to signal board is on
+buzz_blocking(0.1);
+time.sleep(0.25);
+buzz_blocking(0.1);
 
 while mode == 0:
     # Programming Mode
@@ -98,7 +127,7 @@ while mode == 0:
             # 0x11 is start byte then next byte determines "type" of operation. 0x12 means successfully connected
             if read_data[i] == '\x11':
                 if read_data[i+1] == '\x12':
-                    led.value(1);
+                    toggleLeds();
                     connected = True;
                     read_data = [];
 
@@ -114,8 +143,9 @@ while mode == 0:
                     
                     data_file.close()
                     
+                    buzz_blocking(0.1);
                     utime.sleep(0.25);
-                    led.value(0);
+                    toggleLeds();
                     break;
                     
     
@@ -134,13 +164,13 @@ while mode == 0:
                 if read_data[i+1] == '\x13':
                     writing_data = True;
         if writing_data:
-            led.value(1);
+            toggleLeds();
             data_to_write[0] = ""; # get rid of the x13 that appears for some reason
             file = open("data.json", "w")
             file.write(''.join(data_to_write))
             file.close()
             utime.sleep(0.05)
-            led.value(0);
+            toggleLeds();
             file_check = open("data.json", "r")
             try:
                 json.loads(file_check.read())
@@ -174,9 +204,9 @@ while mode == 0:
             if read_data[i] == '\x11':
                 if read_data[i+1] == '\x16':
                     connected = False;
-                    led.value(1);
+                    toggleLeds();
                     time.sleep(0.25);
-                    led.value(0);
+                    toggleLeds();
 
 
 
@@ -193,8 +223,6 @@ temp.calibrate() # calibrate our sensors
 f = fusion.Fusion()
 
 # temp.setGroundPressure(temp.getPressure());
-
-time.sleep(3); # giving a grace period before board is "ready"
 
 
 accelX = 0;
@@ -219,15 +247,20 @@ hz = 0;
 
 baseline_pressure = temp.getPressure();
 
-l_val = False;
+time.sleep(0.25);
+buzz_blocking(1); # buzz to make sure we know that we're in launch mode
+time.sleep(1);
+buzz_blocking(1); # buzz to make sure we know that we're in launch mode
+time.sleep(1);
+buzz_blocking(1); # buzz to make sure we know that we're in launch mode
 
+# Switch back to startupMode 0 RIGHT BEFORE starting logging
+x = x.replace('"startupMode":1', '"startupMode":0');
+fl = open("data.json", "w")
+fl.write(x)
+fl.close()
 while mode == 1: # our main loop
-    if l_val == True:
-        led.value(False);
-        l_val = False;
-    else:
-        led.value(True);
-        l_val = True;
+    toggleLeds();
     
     lastTime = time.ticks_ms();
     data = gyr.get_accel_and_gyro_data()
@@ -270,6 +303,7 @@ while mode == 1: # our main loop
         if apoapsis == 10000:
             apoapsis = avg_pressure;
             baseline_pressure = avg_pressure;
+            baseline_altitude = getAltitude(avg_pressure);
         apoapsis_timeout += 1;
     else:
         apoapsis_timeout = 0;
@@ -278,19 +312,19 @@ while mode == 1: # our main loop
         reached_apoapsis = True;
         print("apoapsis")
         gpio.runTrigger(outputs, 1);
-        led.value(1)
         event = 2;
     
     altitude = getAltitude(avg_pressure);
     
-    print(altitude)
-    
     # Log data
-    file.write(str(event) + ',' + str(accelX) + ',' + str(accelY) + ',' + str(accelZ) + ',' + str(altitude) + ',' + str(temp.getTemperature()) + ',' + str(f.roll) + ',' + str(f.pitch) + ':')
+    if baseline_altitude != 0: # if we're ready to go
+        file.write(str(event) + ',' + str(accelX) + ',' + str(accelY) + ',' + str(accelZ) + ',' + str(altitude - baseline_altitude) + ',' + str(temp.getTemperature()) + ',' + str(f.roll) + ',' + str(f.pitch) + ':')
     
     # Save logged data
     if count % 50 == 0:
         print("Pitch: " + str("%.2f" % f.pitch) + " Roll: " + str("%.2f" % f.roll) + "\naX: " + str(accelX) + "\naY: " + str(accelY) + "\naZ: " + str(accelZ) )
+        print(altitude);
+        print(baseline_altitude)
         file.close()
         file = open("flight_data.txt", "a")
         
@@ -308,5 +342,3 @@ while mode == 1: # our main loop
     
     hz = 1/((limiter - lastTime)/1000);
 #     print(hz);
-    
-    
