@@ -1,1 +1,0 @@
-{ "startupMode": 0, "features": [ {"id": 0, "type": "PYRO", "data": { "action": "none" }}, {"id": 1, "type": "PYRO", "data": { "action": "none", "trigger": 0, "value": 0 }} ] }
