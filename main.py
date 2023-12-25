@@ -51,7 +51,17 @@ read_data = [];
 # startup modes:
 # 0 - programming mode/default mode
 # 1 - flight mode
-file = open("data.json", "r")
+file = None;
+x = "";
+
+try:
+    file = open("data.json", "r")
+except:
+    file = open("data.json", "w");
+    file.write('{"startupMode":0}');
+    file.close();
+    file = open("data.json", "r");
+
 x = file.read()
 x = x.replace("'", '"');
 y = 0
