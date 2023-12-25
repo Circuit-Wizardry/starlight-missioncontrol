@@ -10,6 +10,8 @@ import fusion
 import machine
 from machine import Pin, PWM
 
+defaultJson = '{"startupMode":0,"features":[{"data":{"action":"none"},"id":0,"type":"PYRO"},{"data":{"action":"none"},"id":1,"type":"PYRO"},{"data":{"action":"none"},"id":2,"type":"GPIO"},{"data":{"action":"none"},"id":3,"type":"GPIO"},{"data":{"action":"none"},"id":4,"type":"GPIO"},{"data":{"action":"none"},"id":5,"type":"GPIO"},{"data":{"action":"none"},"id":6,"type":"GPIO"},{"data":{"action":"none"},"id":7,"type":"GPIO"}]}'
+
 
 time.sleep(3)
 
@@ -58,7 +60,7 @@ try:
     file = open("data.json", "r")
 except:
     file = open("data.json", "w")
-    file.write('{"startupMode":0}')
+    file.write(defaultJson)
     file.close()
     file = open("data.json", "r")
 
@@ -69,7 +71,7 @@ try:
     y = json.loads(x)
 except:
     print("defaulting to startupMode 0")
-    y = json.loads('{"startupMode":0}')
+    y = json.loads(defaultJson)
 mode = y["startupMode"]
 
 # Set our pyro channel settings
