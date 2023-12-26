@@ -252,6 +252,7 @@ apoapsis_timeout = 0
 reached_apoapsis = False
 pressure_values = []
 baseline_pressure = 0
+launched = False
 
 limiter = time.ticks_ms()
 lastTime = time.ticks_ms()
@@ -323,11 +324,28 @@ while mode == 1: # our main loop
     if apoapsis_timeout > 3 and not reached_apoapsis:
         reached_apoapsis = True
         print("apoapsis")
-        gpio.runTrigger(outputs, 1)
-        event = 2
+        gpio.runTrigger(outputs, 1, 2)
+
     
     altitude = getAltitude(avg_pressure)
     
+    # Launch detection
+    if (accelY > 0.5 or altitude - baseline_altitude > 10) and not launched:
+        gpio.runTrigger(outputs, 5, 10)
+
+    # Burnout detection
+    if accelY <= 0 and launched:
+        gpio.runTrigger(outputs, 7, 15)
+
+    # Landing detection
+    if altitude < 50:
+        # calculate whether we're still or not
+        compAccelX = accelX + math.sin(f.pitch * (math.pi/180))
+        compAccelY = accelY - math.cos(f.pitch * (math.pi/180)) * math.sin(f.roll * (math.pi/180))
+        compAccelZ = accelZ - math.cos(f.pitch * (math.pi/180)) * math.cos(f.roll * (math.pi/180))
+        if abs(compAccelX) < 0.1 and abs(compAccelY) < 0.1 and abs(compAccelZ) < 0.1:
+            gpio.runTrigger(outputs, 9, 17)
+
     # Log data
     if baseline_altitude != 0: # if we're ready to go
         file.write(str(event) + ',' + str(accelX) + ',' + str(accelY) + ',' + str(accelZ) + ',' + str(altitude - baseline_altitude) + ',' + str(temp.getTemperature()) + ',' + str(f.roll) + ',' + str(f.pitch) + ':')
@@ -343,7 +361,7 @@ while mode == 1: # our main loop
     event = 0
     
     gpio.updateTimeouts()
-    gpio.checkForRuns(outputs, altitude, reached_apoapsis, accelX, accelY, accelZ)
+    gpio.checkForRuns(outputs, altitude - baseline_altitude, reached_apoapsis, accelX, accelY, accelZ)
     
 
     limiter = time.ticks_ms()
