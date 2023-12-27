@@ -22,7 +22,7 @@ def getAltitude(pressure):
 
 # ----------HARDWARE------------
 # pyro channels and GPIO pins are treated the same in firmware
-outputs = [gpio.GPIO(0, 6), gpio.GPIO(1, 7), gpio.GPIO(2, 0), gpio.GPIO(3, 1), gpio.GPIO(4, 16), gpio.GPIO(5, 17), gpio.GPIO(6, 18), gpio.GPIO(7, 19)]
+outputs = [gpio.GPIO(0, 7), gpio.GPIO(1, 6), gpio.GPIO(2, 0), gpio.GPIO(3, 1), gpio.GPIO(4, 16), gpio.GPIO(5, 17), gpio.GPIO(6, 18), gpio.GPIO(7, 19)]
 leds = [Pin(24, Pin.OUT)]
 buzzers = []
 
@@ -84,6 +84,7 @@ try:
             if action == "none":
                 outputs[i].setTrigger(0)
             if action == "main":
+                outputs[i].setFireLength(12.5 * 5)
                 if y["features"][i]["data"]["apogee"] == True:
                     outputs[i].setTrigger(1)
                 else:   
@@ -91,6 +92,7 @@ try:
                     outputs[i].setCustom(y["features"][i]["data"]["height"])
             if action == "drogue": # drogue only has one option: apogee
                 outputs[i].setTrigger(1)
+                outputs[i].setFireLength(12.5 * 5) # 5 seconds
             if action == "custom": # custom: this is where things get fun :)
                 outputs[i].setTrigger(y["features"][i]["data"]["trigger"])
                 outputs[i].setCustom(y["features"][i]["data"]["value"])
@@ -253,6 +255,9 @@ reached_apoapsis = False
 pressure_values = []
 baseline_pressure = 0
 launched = False
+burnout = False
+landed = False
+setAvg = False
 
 limiter = time.ticks_ms()
 lastTime = time.ticks_ms()
@@ -272,9 +277,7 @@ x = x.replace('"startupMode":1', '"startupMode":0')
 fl = open("data.json", "w")
 fl.write(x)
 fl.close()
-while mode == 1: # our main loop
-    toggleLeds()
-    
+while mode == 1: # our main loop    
     lastTime = time.ticks_ms()
     data = gyr.get_accel_and_gyro_data()
     f.update_nomag((data[0], data[1], data[2]), (data[3], data[4], data[5]))
@@ -288,9 +291,9 @@ while mode == 1: # our main loop
         event = gpevent
     
     # Raw accelaration values
-    accelX = gyr.ax #+ math.sin(f.pitch * (math.pi/180))
-    accelY = gyr.ay #- math.cos(f.pitch * (math.pi/180)) * math.sin(f.roll * (math.pi/180))
-    accelZ = gyr.az #- math.cos(f.pitch * (math.pi/180)) * math.cos(f.roll * (math.pi/180))
+    accelX = gyr.ax # + math.sin(f.pitch * (math.pi/180))
+    accelY = gyr.ay # - math.cos(f.pitch * (math.pi/180)) * math.sin(f.roll * (math.pi/180))
+    accelZ = gyr.az # - math.cos(f.pitch * (math.pi/180)) * math.cos(f.roll * (math.pi/180))
     
     
     # Pressure averaging
@@ -312,43 +315,58 @@ while mode == 1: # our main loop
     if avg_pressure - pressure > 0.05:
         apoapsis = avg_pressure
         apoapsis_timeout = 0
-    elif abs(avg_pressure - apoapsis) > 0.1 and len(pressure_values) == 5:
+    elif abs(avg_pressure - apoapsis) > 0.1 and len(pressure_values) > 4:
         if apoapsis == 10000:
             apoapsis = avg_pressure
-            baseline_pressure = avg_pressure
-            baseline_altitude = getAltitude(avg_pressure)
         apoapsis_timeout += 1
     else:
         apoapsis_timeout = 0
         
+    if len(pressure_values) > 4 and not setAvg:
+        baseline_pressure = avg_pressure
+        baseline_altitude = getAltitude(avg_pressure)
+        setAvg = True
+        
+        
     if apoapsis_timeout > 3 and not reached_apoapsis:
         reached_apoapsis = True
         print("apoapsis")
-        gpio.runTrigger(outputs, 1, 2)
+        gpio.runTrigger(outputs, 1, 0)
+        event = 2
 
     
     altitude = getAltitude(avg_pressure)
     
     # Launch detection
-    if (accelY > 0.5 or altitude - baseline_altitude > 10) and not launched:
-        gpio.runTrigger(outputs, 5, 10)
+    if (accelY > 2.5 or altitude - baseline_altitude > 10) and not launched:
+        print("launch")
+        gpio.runTrigger(outputs, 5, 0)
+        event = 13
+        launched = True
 
     # Burnout detection
-    if accelY <= 0 and launched:
-        gpio.runTrigger(outputs, 7, 15)
+    if accelY <= 0 and launched and not burnout:
+        print("burnout")
+        gpio.runTrigger(outputs, 7, 0)
+        event = 15
+        burnout = True
 
     # Landing detection
-    if altitude < 50:
+    if altitude < 50 and not landed and reached_apoapsis:
         # calculate whether we're still or not
         compAccelX = accelX + math.sin(f.pitch * (math.pi/180))
         compAccelY = accelY - math.cos(f.pitch * (math.pi/180)) * math.sin(f.roll * (math.pi/180))
         compAccelZ = accelZ - math.cos(f.pitch * (math.pi/180)) * math.cos(f.roll * (math.pi/180))
         if abs(compAccelX) < 0.1 and abs(compAccelY) < 0.1 and abs(compAccelZ) < 0.1:
-            gpio.runTrigger(outputs, 9, 17)
+            gpio.runTrigger(outputs, 9, 0)
+            event = 17
+            print("landed")
+            landed = True
 
     # Log data
     if baseline_altitude != 0: # if we're ready to go
-        file.write(str(event) + ',' + str(accelX) + ',' + str(accelY) + ',' + str(accelZ) + ',' + str(altitude - baseline_altitude) + ',' + str(temp.getTemperature()) + ',' + str(f.roll) + ',' + str(f.pitch) + ':')
+        toggleLeds()
+        file.write(str(event) + ',' + str(time.ticks_ms()) + ',' + str(accelX) + ',' + str(accelY) + ',' + str(accelZ) + ',' + str(altitude - baseline_altitude) + ',' + str(temp.getTemperature()) + ',' + str(f.roll) + ',' + str(f.pitch) + ':')
     
     # Save logged data
     if count % 50 == 0:
