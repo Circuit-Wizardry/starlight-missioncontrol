@@ -356,7 +356,7 @@ while mode == 1: # our main loop
         burnout = True
 
     # Landing detection
-    if altitude < 50 and not landed and reached_apoapsis:
+    if altitude - baseline_altitude < 50 and not landed and reached_apoapsis:
         # calculate whether we're still or not
         compAccelX = accelX + math.sin(f.pitch * (math.pi/180))
         compAccelY = accelY - math.cos(f.pitch * (math.pi/180)) * math.sin(f.roll * (math.pi/180))
