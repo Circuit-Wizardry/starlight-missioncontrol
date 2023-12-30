@@ -336,6 +336,10 @@ while mode == 1: # our main loop
 
     
     altitude = getAltitude(avg_pressure)
+
+    if len(pressure_values) < 5:
+        altitude = 0
+        baseline_altitude = 0
     
     # Launch detection
     if (accelY > 2.5 or altitude - baseline_altitude > 10) and not launched:
