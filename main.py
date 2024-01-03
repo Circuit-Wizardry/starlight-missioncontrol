@@ -5,6 +5,7 @@ import starlight
 import json
 import time
 import gpio
+import _thread
 import sys
 import fusion
 import machine
@@ -12,6 +13,16 @@ from machine import Pin, PWM
 
 defaultJson = '{"startupMode":0,"features":[{"data":{"action":"none"},"id":0,"type":"PYRO"},{"data":{"action":"none"},"id":1,"type":"PYRO"},{"data":{"action":"none"},"id":2,"type":"GPIO"},{"data":{"action":"none"},"id":3,"type":"GPIO"},{"data":{"action":"none"},"id":4,"type":"GPIO"},{"data":{"action":"none"},"id":5,"type":"GPIO"},{"data":{"action":"none"},"id":6,"type":"GPIO"},{"data":{"action":"none"},"id":7,"type":"GPIO"}]}'
 
+def getAltitude(pressure):
+    return (145366.45 * (1.0 - pow(pressure / 1013.25, 0.190284))) # returns altitude in feet
+
+def clamp(n, minn, maxn):
+    if n < minn:
+        return minn
+    elif n > maxn:
+        return maxn
+    else:
+        return n
 
 time.sleep(3)
 
@@ -75,6 +86,7 @@ except:
 mode = y["startupMode"]
 
 # Set our pyro channel settings
+tvc_enabled = False
 
 try:
     for i in range(len(y["features"])):
@@ -224,173 +236,191 @@ while mode == 0:
 
 
 
-i2c = machine.I2C(1, scl=machine.Pin(3), sda=machine.Pin(2), freq=9600)
+
+# That's the end of the "configuration mode" code.
+# Below is the flight mode code.
+# A gap is included in order to separate them
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+i2c = machine.I2C(1, scl=machine.Pin(3), sda=machine.Pin(2), freq=100000)
 
 gyr = starlight.ICM42605(i2c, 0x68) # create our ICM-42605 object
 gyr.config_gyro() # set up our gyroscope/accelerometer
 gyr.enable() # enable our gyroscope/accelerometer
-#gyr.get_bias() # calibrate our gyroscope/accelerometer
 
 temp = starlight.BMP388(i2c, 0x76) # create our BMP388 object
 temp.enable_temp_and_pressure() # enable our sensors
 temp.calibrate() # calibrate our sensors
 f = fusion.Fusion()
 
-# temp.setGroundPressure(temp.getPressure())
+pressure = 0
+temperature = 0
 
-
-accelX = 0
-accelY = 0
-accelZ = 0
-
-file = open("flight_data.txt", "w")
-file.write('b')
-count = 0
+launched = False
+landed = False
+apogee = False
+burnout = False
+calibrated = False
+calibrating = False
 
 event = 0
 
-apoapsis = 10000
-apoapsis_timeout = 0
-reached_apoapsis = False
-pressure_values = []
-baseline_pressure = 0
-launched = False
-burnout = False
-landed = False
-setAvg = False
+# Thread for data collection
+def thread_func():
+    global calibrating
+    global calibrated
+    global pressure
+    global temperature
+    __t1_cnt = 0
+    while True:
+        __t1_cnt += 1
+        if calibrating:
+            gyr.get_bias()
+            calibrating = False
+            calibrated = True
+        gyr.read_fifo()
+        gyr.get_acceleration()
+        data = gyr.get_accel_and_gyro_data()
+        
+        _ptemp = temp.getPressure()
+        _ttemp = temp.getTemperature()
+        
+        if not _ptemp == -1:
+            pressure = _ptemp
+        if not _ttemp == -1:
+            temperature = _ttemp
+        
+        f.update_nomag((data[0], data[1], data[2]), (data[3], data[4], data[5]))
+        
+        # code to save flight data
+        if __t1_cnt % 20 == 0:
+            file = open("flight_data.txt", "a")
+            file.write(str(event) + ',' + str(time.ticks_ms()) + ',' + str(gyr.ax) + ',' + str(gyr.ay) + ',' + str(gyr.az) + ',' + str(getAltitude(pressure) - getAltitude(bsln_pressure)) + ',' + str(temperature) + ',' + str(f.roll) + ',' + str(f.pitch) + ':')
+            file.close()
+        
+_thread.start_new_thread(thread_func, ())
 
-limiter = time.ticks_ms()
-lastTime = time.ticks_ms()
-hz = 0
+# gx and gz are what we want for TVC
+gx_trgt = 0
+gz_trgt = 0
 
-baseline_pressure = temp.getPressure()
+gx_err = 0
+gz_err = 0
 
-time.sleep(0.25)
-buzz_blocking(1) # buzz to make sure we know that we're in launch mode
-time.sleep(1)
-buzz_blocking(1) # buzz to make sure we know that we're in launch mode
-time.sleep(1)
-buzz_blocking(1) # buzz to make sure we know that we're in launch mode
+gain_px = 0.25
+gain_pz = 0.25
 
-# Switch back to startupMode 0 RIGHT BEFORE starting logging
-x = x.replace('"startupMode":1', '"startupMode":0')
-fl = open("data.json", "w")
-fl.write(x)
-fl.close()
-while mode == 1: # our main loop    
-    lastTime = time.ticks_ms()
-    data = gyr.get_accel_and_gyro_data()
-    f.update_nomag((data[0], data[1], data[2]), (data[3], data[4], data[5]))
+gain_ix = 0.2
+gain_iz = 0.2
 
-    gyr.get_acceleration()
+gain_dx = 0.05
+gain_dz = 0.05
+
+ix = 0
+iz = 0
+
+hz = 100000
+
+count = 0
+bsln_time = time.ticks_us()
+
+# before the main loop starts, we calculate our baseline pressure with some delays
+bsln_pressure = 0
+for i in range(10):
+    bsln_pressure += pressure
+    time.sleep(0.001) # sleep for 1ms
+
+bsln_pressure = bsln_pressure / 10
+
+while True: # our main loop
+    loop_time = time.ticks_us()
     count += 1
-    hz += 1
+    _ax = gyr.ax
+    _ay = gyr.ay
+    _az = gyr.az
     
-    gpevent = gpio.getEvent()
-    if gpevent > 0:
-        event = gpevent
+    if _ay < 1 and not launched:
+        # this is pre-launch mode when determining whether we're upright or not
+        if not calibrated and not calibrating and _ay > 0.95:
+            print("calibrating")
+            calibrating = True
     
-    # Raw accelaration values
-    accelX = gyr.ax # + math.sin(f.pitch * (math.pi/180))
-    accelY = gyr.ay # - math.cos(f.pitch * (math.pi/180)) * math.sin(f.roll * (math.pi/180))
-    accelZ = gyr.az # - math.cos(f.pitch * (math.pi/180)) * math.cos(f.roll * (math.pi/180))
-    
-    
-    # Pressure averaging
-    pressure = temp.getPressure()
-    
-    pressure_values.append(pressure)
-    
-    if len(pressure_values) > 5:
-        pressure_values.pop(0)
-        
-    avg_pressure = 0
-    for i in range(len(pressure_values)):
-        avg_pressure += pressure_values[i]
-    
-    avg_pressure = avg_pressure / len(pressure_values)
-    
-    
-    # Apogee detection
-    if avg_pressure - pressure > 0.05:
-        apoapsis = avg_pressure
-        apoapsis_timeout = 0
-    elif abs(avg_pressure - apoapsis) > 0.1 and len(pressure_values) > 4:
-        if apoapsis == 10000:
-            apoapsis = avg_pressure
-        apoapsis_timeout += 1
-    else:
-        apoapsis_timeout = 0
-        
-    if len(pressure_values) > 4 and not setAvg:
-        baseline_pressure = avg_pressure
-        baseline_altitude = getAltitude(avg_pressure)
-        setAvg = True
-        
-        
-    if apoapsis_timeout > 3 and not reached_apoapsis:
-        reached_apoapsis = True
-        print("apoapsis")
-        gpio.runTrigger(outputs, 1, 0)
-        event = 2
-
-    
-    altitude = getAltitude(avg_pressure)
-
-    if len(pressure_values) < 5:
-        altitude = 0
-        baseline_altitude = 0
-    
-    # Launch detection
-    if (accelY > 2.5 or altitude - baseline_altitude > 10) and not launched:
-        print("launch")
+    if _ay > 1.5 and not launched:
+        gyr.gx = 0
+        gyr.gy = 0
+        gyr.gz = 0
         gpio.runTrigger(outputs, 5, 0)
-        event = 13
+        print("Launched!")
         launched = True
-
-    # Burnout detection
-    if accelY <= 0 and launched and not burnout:
-        print("burnout")
-        gpio.runTrigger(outputs, 7, 0)
-        event = 15
-        burnout = True
-
-    # Landing detection
-    if altitude - baseline_altitude < 50 and not landed and reached_apoapsis:
-        # calculate whether we're still or not
-        compAccelX = accelX + math.sin(f.pitch * (math.pi/180))
-        compAccelY = accelY - math.cos(f.pitch * (math.pi/180)) * math.sin(f.roll * (math.pi/180))
-        compAccelZ = accelZ - math.cos(f.pitch * (math.pi/180)) * math.cos(f.roll * (math.pi/180))
-        if abs(compAccelX) < 0.1 and abs(compAccelY) < 0.1 and abs(compAccelZ) < 0.1:
-            gpio.runTrigger(outputs, 9, 0)
-            event = 17
-            print("landed")
-            landed = True
-
-    # Log data
-    if baseline_altitude != 0: # if we're ready to go
-        toggleLeds()
-        file.write(str(event) + ',' + str(time.ticks_ms()) + ',' + str(accelX) + ',' + str(accelY) + ',' + str(accelZ) + ',' + str(altitude - baseline_altitude) + ',' + str(temp.getTemperature()) + ',' + str(f.roll) + ',' + str(f.pitch) + ':')
     
-    # Save logged data
-    if count % 50 == 0:
-        print("Pitch: " + str("%.2f" % f.pitch) + " Roll: " + str("%.2f" % f.roll) + "\naX: " + str(accelX) + "\naY: " + str(accelY) + "\naZ: " + str(accelZ) )
-        print(altitude)
-        print(baseline_altitude)
-        file.close()
-        file = open("flight_data.txt", "a")
+    # PI controller(s). we need two - one for X and one for Z
+    if launched and not apogee and tvc_enabled:
+        x_sp_pv = gyr.gx/200 - gx_trgt
+        z_sp_pv = gyr.gz/200 - gz_trgt
         
-    event = 0
-    
-    gpio.updateTimeouts()
-    gpio.checkForRuns(outputs, altitude - baseline_altitude, reached_apoapsis, accelX, accelY, accelZ)
-    
-
-    limiter = time.ticks_ms()
-    # Loop control
-    time.sleep(((limiter - lastTime - 80) * -1)/1000) # 80 = loop every 80 ms = 12.5hz
-    limiter = time.ticks_ms()
-
-    
-    hz = 1/((limiter - lastTime)/1000)
-#     print(hz)
+        __prop_x = x_sp_pv # proportion (how far away we are from desired value)
+        __prop_z = z_sp_pv # "                                                 "
+        
+        ix += x_sp_pv/hz # integral (is reset when interval +-1 is reached)
+        iz += z_sp_pv/hz # "                                              "
+        
+        if abs(x_sp_pv) < 1: # reset integral
+            ix = 0
+        if abs(z_sp_pv) < 1:
+            iz = 0
+            
+        # clamp integral
+        ix = clamp(ix, -20, 20)
+        iz = clamp(iz, -20, 20)
+        
+        # calculate our error
+        x_ut = (__prop_x * gain_px) + (ix * gain_ix)
+        z_ut = (__prop_z * gain_pz) + (iz * gain_iz)
+        
+        x_degrees_compensation = clamp((ix / 2), -5, 5) # ix from -10 to 10 will influence x degrees
+        z_degrees_compensation = clamp((iz / 2), -5, 5) # iz from -10 to 10 will influence z degrees
+        
+            
+    hz = (1/(time.ticks_us()-loop_time)) * 1000 * 1000
