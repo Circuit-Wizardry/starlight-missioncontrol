@@ -128,7 +128,6 @@ except:
     toggleLeds()
             
 
-       
 # outputs[0].setTrigger(y["features"][0]["data"]["action"])
 # outputs[1].setTrigger(y["features"][1]["data"]["action"])
 
@@ -341,7 +340,7 @@ def thread_func():
         f.update_nomag((data[0], data[1], data[2]), (data[3], data[4], data[5]))
         
         # code to save flight data
-        if __t1_cnt % 20 == 0:
+        if __t1_cnt % 5 == 0:
             file = open("flight_data.txt", "a")
             file.write(str(event) + ',' + str(time.ticks_ms()) + ',' + str(gyr.ax) + ',' + str(gyr.ay) + ',' + str(gyr.az) + ',' + str(getAltitude(pressure) - getAltitude(bsln_pressure)) + ',' + str(temperature) + ',' + str(f.roll) + ',' + str(f.pitch) + ':')
             file.close()
