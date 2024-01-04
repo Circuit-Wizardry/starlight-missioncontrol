@@ -307,6 +307,12 @@ calibrating = False
 
 event = 0
 
+# clear file
+flightDataClear = open("flight_data.txt", "w")
+flightDataClear.write("b")
+flightDataClear.close()
+
+
 # Thread for data collection
 def thread_func():
     global calibrating
@@ -374,6 +380,15 @@ for i in range(10):
 
 bsln_pressure = bsln_pressure / 10
 
+apogee_counter = 0
+apogee_height = 0
+
+
+# Switch back to startupMode 0 RIGHT BEFORE starting logging
+x = x.replace('"startupMode":1', '"startupMode":0')
+fl = open("data.json", "w")
+fl.write(x)
+fl.close()
 while True: # our main loop
     loop_time = time.ticks_us()
     count += 1
@@ -395,6 +410,16 @@ while True: # our main loop
         print("Launched!")
         launched = True
     
+    if getAltitude(pressure - bsln_pressure) > apogee_height and launched and not apogee:
+        apogee_height = getAltitude(pressure - bsln_pressure)
+    if getAltitude(pressure - bsln_pressure) < apogee_height and launched and not apogee:
+        apogee_counter += 1
+        if apogee_counter > 4:
+            # detect apogee
+            gpio.runTrigger(outputs, 1, 0)
+            apogee = True
+            pass
+
     # PI controller(s). we need two - one for X and one for Z
     if launched and not apogee and tvc_enabled:
         x_sp_pv = gyr.gx/200 - gx_trgt
@@ -421,6 +446,7 @@ while True: # our main loop
         
         x_degrees_compensation = clamp((ix / 2), -5, 5) # ix from -10 to 10 will influence x degrees
         z_degrees_compensation = clamp((iz / 2), -5, 5) # iz from -10 to 10 will influence z degrees
-        
-            
+
+        print(x_degrees_compensation, z_degrees_compensation)
+
     hz = (1/(time.ticks_us()-loop_time)) * 1000 * 1000
