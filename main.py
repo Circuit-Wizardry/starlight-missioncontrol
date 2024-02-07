@@ -86,7 +86,7 @@ except:
 mode = y["startupMode"]
 
 # Set our pyro channel settings
-tvc_enabled = False
+tvc_enabled = True
 
 try:
     for i in range(len(y["features"])):
@@ -311,12 +311,17 @@ flightDataClear = open("flight_data.txt", "w")
 flightDataClear.write("b")
 flightDataClear.close()
 
+bsln_altitude = 0
+
+# give sensors time to avg
+time.sleep(1)
 
 # Thread for data collection
 def thread_func():
     global calibrating
     global calibrated
     global pressure
+    global bsln_altitude
     global temperature
     __t1_cnt = 0
     while True:
@@ -325,8 +330,12 @@ def thread_func():
             gyr.get_bias()
             calibrating = False
             calibrated = True
+        
+        # FIFO is for TVC gyroscope data, NOT acceleration data. accel data is read separately
+        # TVC gyroscope data only has to work for a few seconds during ascent.
         gyr.read_fifo()
-        gyr.get_acceleration()
+        
+        # collects both
         data = gyr.get_accel_and_gyro_data()
         
         _ptemp = temp.getPressure()
@@ -334,6 +343,14 @@ def thread_func():
         
         if not _ptemp == -1:
             pressure = _ptemp
+            if (bsln_altitude == 0):
+                bsln_calc = 0
+                for i in range(10):
+                    time.sleep(0.3)
+                    bsln_calc += getAltitude(pressure)
+                bsln_altitude = bsln_calc / 10
+                print(bsln_altitude)
+                    
         if not _ttemp == -1:
             temperature = _ttemp
         
@@ -342,7 +359,7 @@ def thread_func():
         # code to save flight data
         if __t1_cnt % 5 == 0:
             file = open("flight_data.txt", "a")
-            file.write(str(event) + ',' + str(time.ticks_ms()) + ',' + str(gyr.ax) + ',' + str(gyr.ay) + ',' + str(gyr.az) + ',' + str(getAltitude(pressure) - getAltitude(bsln_pressure)) + ',' + str(temperature) + ',' + str(f.roll) + ',' + str(f.pitch) + ':')
+            file.write(str(event) + ',' + str(time.ticks_ms()) + ',' + str(gyr.ax) + ',' + str(gyr.ay) + ',' + str(gyr.az) + ',' + str(getAltitude(pressure) - bsln_altitude) + ',' + str(temperature) + ',' + str(f.roll) + ',' + str(f.pitch) + ':')
             file.close()
         
 _thread.start_new_thread(thread_func, ())
@@ -360,9 +377,6 @@ gain_pz = 0.25
 gain_ix = 0.2
 gain_iz = 0.2
 
-gain_dx = 0.05
-gain_dz = 0.05
-
 ix = 0
 iz = 0
 
@@ -371,16 +385,10 @@ hz = 100000
 count = 0
 bsln_time = time.ticks_us()
 
-# before the main loop starts, we calculate our baseline pressure with some delays
-bsln_pressure = 0
-for i in range(10):
-    bsln_pressure += pressure
-    time.sleep(0.001) # sleep for 1ms
-
-bsln_pressure = bsln_pressure / 10
-
 apogee_counter = 0
-apogee_height = 0
+apogee_height = -1000
+
+time.sleep(0.25)
 
 
 # Switch back to startupMode 0 RIGHT BEFORE starting logging
@@ -388,7 +396,10 @@ x = x.replace('"startupMode":1', '"startupMode":0')
 fl = open("data.json", "w")
 fl.write(x)
 fl.close()
+
 while True: # our main loop
+    if calibrated and time.ticks_ms() % 100 == 0:
+        toggleLeds()
     loop_time = time.ticks_us()
     count += 1
     _ax = gyr.ax
@@ -398,10 +409,14 @@ while True: # our main loop
     if _ay < 1 and not launched:
         # this is pre-launch mode when determining whether we're upright or not
         if not calibrated and not calibrating and _ay > 0.95:
+            # if we're upright, calibrate
             print("calibrating")
+            toggleLeds()
             calibrating = True
     
+    # launch detection
     if _ay > 1.5 and not launched:
+        # resets any error accumulated during launch prep, detects launch
         gyr.gx = 0
         gyr.gy = 0
         gyr.gz = 0
@@ -409,13 +424,24 @@ while True: # our main loop
         print("Launched!")
         launched = True
     
-    if getAltitude(pressure - bsln_pressure) > apogee_height and launched and not apogee:
-        apogee_height = getAltitude(pressure - bsln_pressure)
-    if getAltitude(pressure - bsln_pressure) < apogee_height and launched and not apogee:
-        apogee_counter += 1
-        if apogee_counter > 4:
+    # Burnout detection
+    if _ay <= 0 and launched and not burnout:
+        print("burnout")
+        gpio.runTrigger(outputs, 7, 0)
+        event = 15
+        burnout = True
+    
+    # apogee detection
+    if getAltitude(pressure) - bsln_altitude > apogee_height and launched and not apogee:
+        apogee_height = getAltitude(pressure) - bsln_altitude
+        
+    if (getAltitude(pressure) - bsln_altitude + 2) < apogee_height and launched and not apogee:
+        apogeeOverride = False # this is for developing, set to true to never reach apogee
+        apogee_counter += 1/hz # adds 1/hz to apogee_counter, making this var represent time in seconds
+        if apogee_counter > 2 and not apogeeOverride: # if descending for 2 seconds, call apogee
             # detect apogee
             gpio.runTrigger(outputs, 1, 0)
+            print("Apogee!")
             apogee = True
             pass
 
@@ -445,7 +471,13 @@ while True: # our main loop
         
         x_degrees_compensation = clamp((x_ut / 2), -5, 5) # ix from -10 to 10 will influence x degrees
         z_degrees_compensation = clamp((z_ut / 2), -5, 5) # iz from -10 to 10 will influence z degrees
-
+        
         print(x_degrees_compensation, z_degrees_compensation)
+        
+    
+    event = 0
+    
+    gpio.updateTimeouts()
+    gpio.checkForRuns(outputs, getAltitude(pressure) - bsln_altitude, apogee, _ax, _ay, _az)
 
     hz = (1/(time.ticks_us()-loop_time)) * 1000 * 1000
