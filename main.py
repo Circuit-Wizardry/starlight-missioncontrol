@@ -86,7 +86,7 @@ except:
 mode = y["startupMode"]
 
 # Set our pyro channel settings
-tvc_enabled = True
+tvc_enabled = False
 
 try:
     for i in range(len(y["features"])):
@@ -321,6 +321,7 @@ def thread_func():
     global calibrating
     global calibrated
     global pressure
+    global event
     global bsln_altitude
     global temperature
     __t1_cnt = 0
@@ -361,6 +362,7 @@ def thread_func():
             file = open("flight_data.txt", "a")
             file.write(str(event) + ',' + str(time.ticks_ms()) + ',' + str(gyr.ax) + ',' + str(gyr.ay) + ',' + str(gyr.az) + ',' + str(getAltitude(pressure) - bsln_altitude) + ',' + str(temperature) + ',' + str(f.roll) + ',' + str(f.pitch) + ':')
             file.close()
+            event = 0
         
 _thread.start_new_thread(thread_func, ())
 
@@ -392,14 +394,12 @@ time.sleep(0.25)
 
 
 # Switch back to startupMode 0 RIGHT BEFORE starting logging
-x = x.replace('"startupMode":1', '"startupMode":0')
+# x = x.replace('"startupMode":1', '"startupMode":0')
 fl = open("data.json", "w")
 fl.write(x)
 fl.close()
 
 while True: # our main loop
-    if calibrated and time.ticks_ms() % 100 == 0:
-        toggleLeds()
     loop_time = time.ticks_us()
     count += 1
     _ax = gyr.ax
@@ -411,7 +411,6 @@ while True: # our main loop
         if not calibrated and not calibrating and _ay > 0.95:
             # if we're upright, calibrate
             print("calibrating")
-            toggleLeds()
             calibrating = True
     
     # launch detection
@@ -421,6 +420,7 @@ while True: # our main loop
         gyr.gy = 0
         gyr.gz = 0
         gpio.runTrigger(outputs, 5, 0)
+        event = 13
         print("Launched!")
         launched = True
     
@@ -442,6 +442,7 @@ while True: # our main loop
             # detect apogee
             gpio.runTrigger(outputs, 1, 0)
             print("Apogee!")
+            event = 2
             apogee = True
             pass
 
@@ -474,8 +475,6 @@ while True: # our main loop
         
         print(x_degrees_compensation, z_degrees_compensation)
         
-    
-    event = 0
     
     gpio.updateTimeouts()
     gpio.checkForRuns(outputs, getAltitude(pressure) - bsln_altitude, apogee, _ax, _ay, _az)
