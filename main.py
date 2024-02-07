@@ -443,8 +443,8 @@ while True: # our main loop
         x_ut = (__prop_x * gain_px) + (ix * gain_ix)
         z_ut = (__prop_z * gain_pz) + (iz * gain_iz)
         
-        x_degrees_compensation = clamp((ix / 2), -5, 5) # ix from -10 to 10 will influence x degrees
-        z_degrees_compensation = clamp((iz / 2), -5, 5) # iz from -10 to 10 will influence z degrees
+        x_degrees_compensation = clamp((x_ut / 2), -5, 5) # ix from -10 to 10 will influence x degrees
+        z_degrees_compensation = clamp((z_ut / 2), -5, 5) # iz from -10 to 10 will influence z degrees
 
         print(x_degrees_compensation, z_degrees_compensation)
 
