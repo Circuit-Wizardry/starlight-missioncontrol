@@ -358,7 +358,7 @@ def thread_func():
         f.update_nomag((data[0], data[1], data[2]), (data[3], data[4], data[5]))
         
         # code to save flight data
-        if __t1_cnt % 5 == 0:
+        if __t1_cnt % 5 == 0 or event > 0:
             file = open("flight_data.txt", "a")
             file.write(str(event) + ',' + str(time.ticks_ms()) + ',' + str(gyr.ax) + ',' + str(gyr.ay) + ',' + str(gyr.az) + ',' + str(getAltitude(pressure) - bsln_altitude) + ',' + str(temperature) + ',' + str(f.roll) + ',' + str(f.pitch) + ':')
             file.close()
@@ -394,12 +394,18 @@ time.sleep(0.25)
 
 
 # Switch back to startupMode 0 RIGHT BEFORE starting logging
-# x = x.replace('"startupMode":1', '"startupMode":0')
+x = x.replace('"startupMode":1', '"startupMode":0')
 fl = open("data.json", "w")
 fl.write(x)
 fl.close()
 
+buzz_blocking(1)
+
 while True: # our main loop
+    
+    if time.ticks_ms() % 200 == 0:
+        toggleLeds()
+    
     loop_time = time.ticks_us()
     count += 1
     _ax = gyr.ax
@@ -419,14 +425,16 @@ while True: # our main loop
         gyr.gx = 0
         gyr.gy = 0
         gyr.gz = 0
+        # runtrigger eventid is set to zero b/c event is set right here
         gpio.runTrigger(outputs, 5, 0)
         event = 13
         print("Launched!")
         launched = True
     
     # Burnout detection
-    if _ay <= 0 and launched and not burnout:
+    if _ay <= 0.5 and launched and not burnout:
         print("burnout")
+        # runtrigger eventid is set to zero b/c event is set right here
         gpio.runTrigger(outputs, 7, 0)
         event = 15
         burnout = True
@@ -438,13 +446,27 @@ while True: # our main loop
     if (getAltitude(pressure) - bsln_altitude + 2) < apogee_height and launched and not apogee:
         apogeeOverride = False # this is for developing, set to true to never reach apogee
         apogee_counter += 1/hz # adds 1/hz to apogee_counter, making this var represent time in seconds
+        
         if apogee_counter > 2 and not apogeeOverride: # if descending for 2 seconds, call apogee
             # detect apogee
+            # runtrigger eventid is set to zero b/c event is set right here
             gpio.runTrigger(outputs, 1, 0)
             print("Apogee!")
+            # apogee is special - it gets 2 as its number (for some reason)
             event = 2
             apogee = True
-            pass
+        
+    if (abs(getAltitude(pressure) - bsln_altitude) < 10) and apogee and not landed:
+        print("Landed!")
+        gpio.runTrigger(outputs, 9, 0)
+        event = 17
+        landed = True
+
+
+
+
+
+
 
     # PI controller(s). we need two - one for X and one for Z
     if launched and not apogee and tvc_enabled:
@@ -475,8 +497,18 @@ while True: # our main loop
         
         print(x_degrees_compensation, z_degrees_compensation)
         
+        
+        
+        
+        
+        
+        
+        
     
     gpio.updateTimeouts()
     gpio.checkForRuns(outputs, getAltitude(pressure) - bsln_altitude, apogee, _ax, _ay, _az)
+    
+    if gpio.getEvent() > 0:
+        event = gpio.getEvent()
 
     hz = (1/(time.ticks_us()-loop_time)) * 1000 * 1000

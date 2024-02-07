@@ -37,11 +37,11 @@ def checkForRuns(pins, pressure, apogee, accelX, accelY, accelZ):
     for i in range(len(pins)):
         if pins[i].getTrigger() == 2: # altitude going DOWN
             if apogee and pressure < pins[i].getCustom() and not pins[i].isTriggered():
-                pins[i].trigger(0)
+                pins[i].trigger(10)
                 timeouts.append([pins[i], pins[i].getFireLength()])
         if pins[i].getTrigger() == 3: # altitude going UP
             if not apogee and pressure > pins[i].getCustom() and not pins[i].isTriggered():
-                pins[i].trigger(1)
+                pins[i].trigger(11)
                 timeouts.append([pins[i], pins[i].getFireLength()])
 
 
