@@ -5,6 +5,8 @@ timeouts = []
 global event
 event = 0
 
+
+# Gets triggered event (for data logging purposes)
 def getEvent():
     global event
     if event > 0:
@@ -15,6 +17,8 @@ def getEvent():
     else:
         return 0
 
+
+# Switches certain GPIO on board
 def runTrigger(pins, triggerId, eventId):
     for i in range(len(pins)):
 #         print("finding " + str(pins[i].getTrigger()))

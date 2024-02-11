@@ -320,6 +320,8 @@ time.sleep(1)
 def thread_func():
     global calibrating
     global calibrated
+    global launched
+    global apogee
     global pressure
     global event
     global bsln_altitude
@@ -334,11 +336,13 @@ def thread_func():
         
         # FIFO is for TVC gyroscope data, NOT acceleration data. accel data is read separately
         # TVC gyroscope data only has to work for a few seconds during ascent.
-        gyr.read_fifo()
+        if launched and not apogee:
+            gyr.read_fifo()
         
-        # collects both
+        # collects both for data logging and sensor fusion purposes
         data = gyr.get_accel_and_gyro_data()
         
+        # Collects temperature and pressure data
         _ptemp = temp.getPressure()
         _ttemp = temp.getTemperature()
         
@@ -401,6 +405,9 @@ fl.close()
 
 buzz_blocking(1)
 
+# TVC limiter variable. clamps our TVC to 100Hz
+tvc_limiter = time.ticks_ms()
+
 while True: # our main loop
     
     if time.ticks_ms() % 200 == 0:
@@ -442,7 +449,8 @@ while True: # our main loop
     # apogee detection
     if getAltitude(pressure) - bsln_altitude > apogee_height and launched and not apogee:
         apogee_height = getAltitude(pressure) - bsln_altitude
-        
+
+    # Our real apogee detection
     if (getAltitude(pressure) - bsln_altitude + 2) < apogee_height and launched and not apogee:
         apogeeOverride = False # this is for developing, set to true to never reach apogee
         apogee_counter += 1/hz # adds 1/hz to apogee_counter, making this var represent time in seconds
@@ -456,6 +464,7 @@ while True: # our main loop
             event = 2
             apogee = True
         
+    # If we're within 10 feet of our baseline altitude and have already reached apogee, we assume that we have landed
     if (abs(getAltitude(pressure) - bsln_altitude) < 10) and apogee and not landed:
         print("Landed!")
         gpio.runTrigger(outputs, 9, 0)
@@ -469,33 +478,41 @@ while True: # our main loop
 
 
     # PI controller(s). we need two - one for X and one for Z
-    if launched and not apogee and tvc_enabled:
+    # tvc limiter limits this to a maximum of 100Hz (the constant here sets that)
+    if launched and not apogee and tvc_enabled and (tvc_limiter + 10) > time.ticks_ms():
+
+        # These are our errors
         x_sp_pv = gyr.gx/200 - gx_trgt
         z_sp_pv = gyr.gz/200 - gz_trgt
         
+        # This is our P variable
         __prop_x = x_sp_pv # proportion (how far away we are from desired value)
         __prop_z = z_sp_pv # "                                                 "
         
+        # This is our I variable
         ix += x_sp_pv/hz # integral (is reset when interval +-1 is reached)
         iz += z_sp_pv/hz # "                                              "
         
-        if abs(x_sp_pv) < 1: # reset integral
+        if abs(x_sp_pv) < 1: # reset integral if error is less than 1 degree (error is degrees - baseline)
             ix = 0
         if abs(z_sp_pv) < 1:
             iz = 0
             
-        # clamp integral
+        # clamp integral to prevent runaway
         ix = clamp(ix, -20, 20)
         iz = clamp(iz, -20, 20)
         
-        # calculate our error
+        # calculate our true error
         x_ut = (__prop_x * gain_px) + (ix * gain_ix)
         z_ut = (__prop_z * gain_pz) + (iz * gain_iz)
         
         x_degrees_compensation = clamp((x_ut / 2), -5, 5) # ix from -10 to 10 will influence x degrees
         z_degrees_compensation = clamp((z_ut / 2), -5, 5) # iz from -10 to 10 will influence z degrees
         
+        # x and z compensation are the degrees that we'll actuate the TVC mount to
         print(x_degrees_compensation, z_degrees_compensation)
+
+        tvc_limiter = time.ticks_ms()
         
         
         
@@ -504,11 +521,13 @@ while True: # our main loop
         
         
         
-    
+    # check to see if any gpio pins should be triggered
     gpio.updateTimeouts()
     gpio.checkForRuns(outputs, getAltitude(pressure) - bsln_altitude, apogee, _ax, _ay, _az)
     
+    # set event if event is found
     if gpio.getEvent() > 0:
         event = gpio.getEvent()
 
+    # calculate how fast our loop is
     hz = (1/(time.ticks_us()-loop_time)) * 1000 * 1000
