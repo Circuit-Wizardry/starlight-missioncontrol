@@ -86,7 +86,7 @@ except:
 mode = y["startupMode"]
 
 # Set our pyro channel settings
-tvc_enabled = False
+tvc_enabled = True
 
 try:
     for i in range(len(y["features"])):
@@ -333,11 +333,12 @@ def thread_func():
             gyr.get_bias()
             calibrating = False
             calibrated = True
+            toggleLeds()
         
         # FIFO is for TVC gyroscope data, NOT acceleration data. accel data is read separately
         # TVC gyroscope data only has to work for a few seconds during ascent.
-        if launched and not apogee:
-            gyr.read_fifo()
+        # if launched and not apogee:
+        gyr.read_fifo()
         
         # collects both for data logging and sensor fusion purposes
         data = gyr.get_accel_and_gyro_data()
@@ -410,9 +411,6 @@ tvc_limiter = time.ticks_ms()
 
 while True: # our main loop
     
-    if time.ticks_ms() % 200 == 0:
-        toggleLeds()
-    
     loop_time = time.ticks_us()
     count += 1
     _ax = gyr.ax
@@ -460,7 +458,7 @@ while True: # our main loop
             # runtrigger eventid is set to zero b/c event is set right here
             gpio.runTrigger(outputs, 1, 0)
             print("Apogee!")
-            # apogee is special - it gets 2 as its number (for some reason)
+            # apogee is special - it gets 2 as its number (as it was developed before the rest of the event system)
             event = 2
             apogee = True
         
@@ -468,6 +466,7 @@ while True: # our main loop
     if (abs(getAltitude(pressure) - bsln_altitude) < 10) and apogee and not landed:
         print("Landed!")
         gpio.runTrigger(outputs, 9, 0)
+        # 17 is the number for landing
         event = 17
         landed = True
 
@@ -479,7 +478,7 @@ while True: # our main loop
 
     # PI controller(s). we need two - one for X and one for Z
     # tvc limiter limits this to a maximum of 100Hz (the constant here sets that)
-    if launched and not apogee and tvc_enabled and (tvc_limiter + 10) > time.ticks_ms():
+    if launched and not apogee and tvc_enabled and time.ticks_ms() > (tvc_limiter + 10):
 
         # These are our errors
         x_sp_pv = gyr.gx/200 - gx_trgt
@@ -506,11 +505,12 @@ while True: # our main loop
         x_ut = (__prop_x * gain_px) + (ix * gain_ix)
         z_ut = (__prop_z * gain_pz) + (iz * gain_iz)
         
-        x_degrees_compensation = clamp((x_ut / 2), -5, 5) # ix from -10 to 10 will influence x degrees
-        z_degrees_compensation = clamp((z_ut / 2), -5, 5) # iz from -10 to 10 will influence z degrees
+        # Compensation isn't done just yet
+        # x_degrees_compensation = clamp((x_ut / 2), -5, 5) # ix from -10 to 10 will influence x degrees
+        # z_degrees_compensation = clamp((z_ut / 2), -5, 5) # iz from -10 to 10 will influence z degrees
         
         # x and z compensation are the degrees that we'll actuate the TVC mount to
-        print(x_degrees_compensation, z_degrees_compensation)
+        print(x_ut, z_ut)
 
         tvc_limiter = time.ticks_ms()
         
