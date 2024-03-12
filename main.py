@@ -86,7 +86,7 @@ except:
 mode = y["startupMode"]
 
 # Set our pyro channel settings
-tvc_enabled = True
+tvc_enabled = False
 
 try:
     for i in range(len(y["features"])):
