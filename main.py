@@ -118,7 +118,6 @@ try:
                     leds.append(Pin(y["features"][i]["data"]["pin"], Pin.OUT))
 
 except:
-    print("error lmao")
     toggleLeds()
     time.sleep(0.1)
     toggleLeds()
