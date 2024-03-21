@@ -52,16 +52,38 @@ class ICM42605:
         self.i2c.writeto_mem(self.addr, GYRO_CONFIG, value)
         gyro_fs_sel = int.from_bytes(value, 'big') & 0xE0
         if gyro_fs_sel == 0x40:
-            self.gRes = 500/32768
+            self.gRes = 512/32768
             
         gyro_odr = int.from_bytes(value, 'big') & 0x0F
         if gyro_odr == 0x08:
             self.gOdr = 100
             
+                
+    def enable(self, accel=True, gyro=True, temp=True):
+        if self.operating:
+            return False
         
+        # Start FIFO
+        self.i2c.writeto_mem(self.addr, FIFO_CONFIG1, b'\x02')
+        self.i2c.writeto_mem(self.addr, FIFO_CONFIG, b'\x40')
+        
+        val = 0x00
+        if accel:
+            val |= 0x03
+        if gyro:
+            val |= 0x0c
+        if temp:
+            val &= 0x1F
+        self.i2c.writeto_mem(self.addr, PWR_MGMT0, val.to_bytes(1, 'big'))
+        self.operating = True
+        
+    def disable(self):
+        self.i2c.writeto_mem(self.addr, PWR_MGMT0, b'\x00')
+        self.operating = False
+
     def get_bias(self):
         print("Keep the board flat and still while the gyroscope is calibrated.")
-        time.sleep(5)
+        time.sleep(1)
             
         precision = 100 # change this number to change precision of calibration. higher number will take longer
         
@@ -87,37 +109,7 @@ class ICM42605:
         self.gx_bias /= precision
         self.gy_bias /= precision
         self.gz_bias /= precision
-        
-    def enable(self, accel=True, gyro=True, temp=True):
-        if self.operating:
-            return False
-        
-        # Start FIFO
-        #self.i2c.writeto_mem(self.addr, FIFO_CONFIG1, b'\x02')
-        #self.i2c.writeto_mem(self.addr, FIFO_CONFIG, b'\x40')
-        
-        val = 0x00
-        if accel:
-            val |= 0x03
-        if gyro:
-            val |= 0x0c
-        if temp:
-            val &= 0x1F
-        self.i2c.writeto_mem(self.addr, PWR_MGMT0, val.to_bytes(1, 'big'))
-        self.operating = True
-        
-    def disable(self):
-        self.i2c.writeto_mem(self.addr, PWR_MGMT0, b'\x00')
-        self.operating = False
-        
-    def get_gyro_x(self):
-        data = self.i2c.readfrom_mem(self.addr, GYRO_DATA_X1, 2)
-        gyro_value = (data[0] << 8) | data[1]
-        # Convert to signed integer
-        if gyro_value & 0x8000:
-            gyro_value -= 0x10000
-    
-        return gyro_value * self.gRes
+        print("Done!")
     
     def get_accel_and_gyro_data(self):
         data = self.i2c.readfrom_mem(self.addr, ACCEL_DATA_X1, 12)
@@ -128,6 +120,8 @@ class ICM42605:
         val = (data[4] << 8) | data[5]
         self.az = ((val - 0x10000) if (val & 0x8000) else val) * self.aRes - self.az_bias
         val = (data[6] << 8) | data[7]
+        
+        # these are just for the sensor fusion
         gx = ((val - 0x10000) if (val & 0x8000) else val) * self.gRes - self.gx_bias
         val = (data[8] << 8) | data[9]
         gy = ((val - 0x10000) if (val & 0x8000) else val) * self.gRes - self.gy_bias
@@ -135,11 +129,6 @@ class ICM42605:
         gz = ((val - 0x10000) if (val & 0x8000) else val) * self.gRes - self.gz_bias
         return (self.ax, self.ay, self.az, gx, gy, gz)
     
-    def updateData(self, time):
-        data = self.get_accel_and_gyro_data()
-        self.gx += data[3] * time/1000
-        self.gy += data[4] * time/1000
-        self.gz += data[5] * time/1000
     
     def fifo_count(self):
         count = self.i2c.readfrom_mem(self.addr, FIFO_COUNTH, 2)
@@ -159,28 +148,8 @@ class ICM42605:
                 val = (gyr[5] << 8) | gyr[6]
                 self.gz += (((val - 0x10000) if (val & 0x8000) else val) * self.gRes - self.gz_bias)
                 i += 8
-                
-    def get_acceleration(self):
-        data = self.i2c.readfrom_mem(self.addr, ACCEL_DATA_X1, 12)
-        val = (data[0] << 8) | data[1]
-        self.ax = ((val - 0x10000) if (val & 0x8000) else val) * self.aRes - self.ax_bias
-        val = (data[2] << 8) | data[3]
-        self.ay = ((val - 0x10000) if (val & 0x8000) else val) * self.aRes - self.ay_bias
-        val = (data[4] << 8) | data[5]
-        self.az = ((val - 0x10000) if (val & 0x8000) else val) * self.aRes - self.az_bias
-                
-    
-    def start_gyros(self):
-        _thread.start_new_thread(self.thread_func, ())
-        
-    def thread_func(self):
-        import time
-        start = time.ticks_ms()
-        while True:
-            self.updateData(time.ticks_diff(time.ticks_ms(), start))
-            start = time.ticks_ms()
-            time.sleep_ms(50)
-            
+                                
+
             
 class BMP388:
     def __init__(self, i2c, address):
@@ -233,7 +202,7 @@ class BMP388:
         status = self.i2c.readfrom_mem(self.addr, 0x03, 1)
         #print(toHex(status))
         if (self.toInt(status) & 0x60 != 0x60):
-            print("Not ready")
+            pass
         else:
             # ** If you want to know how this works, don't ask me. I stole all this code from https://github.com/adafruit/Adafruit_CircuitPython_BMP3XX/
             
@@ -291,4 +260,3 @@ if __name__ == '__main__':
     while True:
         print(temp.getPressure())
         time.sleep_ms(1000)
-        

@@ -5,21 +5,25 @@ timeouts = []
 global event
 event = 0
 
+
+# Gets triggered event (for data logging purposes)
 def getEvent():
     global event
     if event > 0:
         s = event
         event = 0
-        print("sent event " + str(s))
+#         print("sent event " + str(s))
         return s
     else:
         return 0
 
+
+# Switches certain GPIO on board
 def runTrigger(pins, triggerId, eventId):
     for i in range(len(pins)):
-        print("finding " + str(pins[i].getTrigger()))
+#         print("finding " + str(pins[i].getTrigger()))
         if pins[i].getTrigger() == triggerId:
-            print("found: " + str(pins[i].getTrigger()))
+#             print("found: " + str(pins[i].getTrigger()))
             pins[i].trigger(eventId)
             timeouts.append([pins[i], pins[i].getFireLength()])
 
@@ -37,11 +41,11 @@ def checkForRuns(pins, pressure, apogee, accelX, accelY, accelZ):
     for i in range(len(pins)):
         if pins[i].getTrigger() == 2: # altitude going DOWN
             if apogee and pressure < pins[i].getCustom() and not pins[i].isTriggered():
-                pins[i].trigger(0)
+                pins[i].trigger(10)
                 timeouts.append([pins[i], pins[i].getFireLength()])
         if pins[i].getTrigger() == 3: # altitude going UP
             if not apogee and pressure > pins[i].getCustom() and not pins[i].isTriggered():
-                pins[i].trigger(1)
+                pins[i].trigger(11)
                 timeouts.append([pins[i], pins[i].getFireLength()])
 
 
